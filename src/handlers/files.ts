@@ -1,9 +1,7 @@
 import { existsSync, unlinkSync } from 'fs';
 import { FileStorage, type StorageMode } from '../storage.js';
 
-const storage = new FileStorage();
-
-export async function handleFilePreview(req: Request, url: URL): Promise<Response> {
+export async function handleFilePreview(req: Request, url: URL, storage: FileStorage): Promise<Response> {
   const path = url.searchParams.get('path');
   const mode = (url.searchParams.get('mode') || 'multistream') as StorageMode;
 
@@ -88,7 +86,7 @@ export async function handleFilePreview(req: Request, url: URL): Promise<Respons
   }
 }
 
-export async function handleFileDownload(req: Request, url: URL): Promise<Response> {
+export async function handleFileDownload(req: Request, url: URL, storage: FileStorage): Promise<Response> {
   console.log('Download endpoint hit');
   const path = url.searchParams.get('path');
   const mode = (url.searchParams.get('mode') || 'multistream') as StorageMode;
@@ -141,7 +139,7 @@ export async function handleFileDownload(req: Request, url: URL): Promise<Respon
   }
 }
 
-export async function handleFileDelete(req: Request, url: URL): Promise<Response> {
+export async function handleFileDelete(req: Request, url: URL, storage: FileStorage): Promise<Response> {
   if (req.method !== 'DELETE') {
     return new Response('Method not allowed', { status: 405 });
   }
@@ -174,6 +172,14 @@ export async function handleFileDelete(req: Request, url: URL): Promise<Response
       return new Response('File not found', { status: 404 });
     }
 
+    // Delete from database first (to maintain referential integrity)
+    const storedFile = storage.getDatabase().findFileByPath(filePath);
+    if (storedFile) {
+      storage.getDatabase().deleteStoredFile(storedFile.hash);
+      console.log('Database records deleted for hash:', storedFile.hash);
+    }
+
+    // Delete physical file
     unlinkSync(filePath);
     console.log('File deleted successfully:', filePath);
 

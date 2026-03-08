@@ -1,19 +1,19 @@
 {
   "name": "DropZone",
-  "description": "Direct backup full-stack solution",
   "author": "Xeoxaz <Xeoxaz@outlook.com>",
   "module": "index.ts",
-  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "description": "Linux-only direct backup app built with Bun and vault-backed storage",
   "private": true,
   "scripts": {
     "start": "bun run index.ts",
     "dev": "bun --watch run index.ts",
     "typecheck": "tsc --noEmit"
   },
-  "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  }
+  "type": "module"
 }

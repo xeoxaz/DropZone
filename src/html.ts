@@ -47,6 +47,43 @@ export function getHtmlPage(): string {
             margin-bottom: 5px;
         }
 
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .tab-btn {
+            background: #121212;
+            border: 1px solid #333;
+            color: #d0d0d0;
+            padding: 10px 14px;
+            border-radius: 999px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 0.9rem;
+        }
+
+        .tab-btn:hover {
+            border-color: #4a9eff;
+            color: #fff;
+        }
+
+        .tab-btn.active {
+            background: #1a2332;
+            border-color: #4a9eff;
+            color: #fff;
+        }
+
+        .tab-panel {
+            display: none;
+        }
+
+        .tab-panel.active {
+            display: block;
+        }
+
         .drop-zone {
             border: 2px dashed #444;
             border-radius: 8px;
@@ -107,6 +144,35 @@ export function getHtmlPage(): string {
         .file-meta {
             font-size: 0.8rem;
             opacity: 0.6;
+        }
+
+        .file-target {
+            margin-top: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .file-target label {
+            font-size: 0.75rem;
+            opacity: 0.8;
+            min-width: 78px;
+        }
+
+        .file-target input {
+            flex: 1;
+            min-width: 0;
+            background: #0f0f0f;
+            border: 1px solid #3a3a3a;
+            color: #fff;
+            border-radius: 4px;
+            padding: 6px 8px;
+            font-size: 0.8rem;
+        }
+
+        .file-target input:focus {
+            outline: none;
+            border-color: #4a9eff;
         }
 
         .file-size {
@@ -241,6 +307,75 @@ export function getHtmlPage(): string {
             margin-bottom: 10px;
             color: #4a9eff;
             font-size: 1rem;
+        }
+
+        .device-usage {
+            margin-top: 16px;
+            background: #0e1117;
+            border: 1px solid #2c3440;
+            border-radius: 8px;
+            padding: 14px;
+        }
+
+        .device-usage h3 {
+            color: #8dd6ff;
+            margin-bottom: 8px;
+            font-size: 0.95rem;
+        }
+
+        .device-meta {
+            font-size: 0.8rem;
+            opacity: 0.8;
+            margin-bottom: 10px;
+            word-break: break-all;
+        }
+
+        .block-bar {
+            display: flex;
+            width: 100%;
+            height: 18px;
+            background: #1a1f29;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid #344154;
+        }
+
+        .block-segment {
+            height: 100%;
+            min-width: 0;
+        }
+
+        .block-segment.app {
+            background: #00c2a8;
+        }
+
+        .block-segment.other {
+            background: #ff8c42;
+        }
+
+        .block-segment.free {
+            background: #2f7cff;
+        }
+
+        .block-legend {
+            margin-top: 10px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 8px;
+            font-size: 0.78rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            opacity: 0.9;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
         }
 
         .storage-info {
@@ -540,6 +675,13 @@ export function getHtmlPage(): string {
             <p class="subtitle">Direct backup solution</p>
         </div>
 
+        <div class="tabs">
+            <button class="tab-btn active" id="tabUpload" type="button">Drop Area / File upload</button>
+            <button class="tab-btn" id="tabBrowser" type="button">File System / File Browser</button>
+        </div>
+
+        <div class="tab-panel active" id="uploadPanel">
+
         <div class="drop-zone" id="dropZone">
             <p>📁 Drag & drop files here</p>
             <small>or click to select files</small>
@@ -572,6 +714,10 @@ export function getHtmlPage(): string {
             </div>
         </div>
 
+        </div>
+
+        <div class="tab-panel" id="browserPanel">
+
         <div class="storage-section">
             <h2>📁 Storage Overview</h2>
             <div class="storage-stats" id="storageStats">
@@ -598,6 +744,13 @@ export function getHtmlPage(): string {
                 </div>
             </div>
 
+            <div class="device-usage" id="deviceUsage">
+                <h3>Device Block Graph</h3>
+                <div class="device-meta">Loading device information...</div>
+                <div class="block-bar" aria-label="Device storage usage graph"></div>
+                <div class="block-legend"></div>
+            </div>
+
             <button class="btn primary" id="refreshStorage">Refresh Storage</button>
         </div>
 
@@ -621,6 +774,8 @@ export function getHtmlPage(): string {
             </div>
         </div>
 
+        </div>
+
         <div class="preview-modal" id="previewModal">
             <div class="preview-content">
                 <button class="preview-close" onclick="triFlow.closePreview()">✕ Close</button>
@@ -640,9 +795,11 @@ export function getHtmlPage(): string {
             constructor() {
                 this.selectedMode = null;
                 this.files = [];
+                this.targetNames = [];
                 this.activeUploads = new Map();
                 this.currentView = 'grid';
                 this.currentFilter = 'all';
+                this.currentTab = 'upload';
                 this.storedFiles = [];
                 this.initializeEventListeners();
                 this.detectCapabilities();
@@ -654,6 +811,8 @@ export function getHtmlPage(): string {
                 const uploadBtn = document.getElementById('uploadBtn');
                 const clearBtn = document.getElementById('clearBtn');
                 const refreshStorageBtn = document.getElementById('refreshStorage');
+                const tabUpload = document.getElementById('tabUpload');
+                const tabBrowser = document.getElementById('tabBrowser');
 
                 // File handling only (mode selection removed)
                 dropZone.addEventListener('click', () => fileInput.click());
@@ -666,9 +825,30 @@ export function getHtmlPage(): string {
                 uploadBtn.addEventListener('click', () => this.startUpload());
                 clearBtn.addEventListener('click', () => this.clearFiles());
                 refreshStorageBtn.addEventListener('click', () => this.loadStorageInfo());
+                tabUpload.addEventListener('click', () => this.switchTab('upload'));
+                tabBrowser.addEventListener('click', () => this.switchTab('browser'));
 
                 // Load storage info on page load
                 this.loadStorageInfo();
+            }
+
+            switchTab(tab) {
+                this.currentTab = tab;
+
+                const isUpload = tab === 'upload';
+                const uploadPanel = document.getElementById('uploadPanel');
+                const browserPanel = document.getElementById('browserPanel');
+                const tabUpload = document.getElementById('tabUpload');
+                const tabBrowser = document.getElementById('tabBrowser');
+
+                uploadPanel.classList.toggle('active', isUpload);
+                browserPanel.classList.toggle('active', !isUpload);
+                tabUpload.classList.toggle('active', isUpload);
+                tabBrowser.classList.toggle('active', !isUpload);
+
+                if (!isUpload) {
+                    this.loadStorageInfo();
+                }
             }
 
             detectCapabilities() {
@@ -705,9 +885,20 @@ export function getHtmlPage(): string {
 
             handleFiles(fileList) {
                 this.files = Array.from(fileList);
+                this.targetNames = this.files.map(file => file.name);
                 this.displayFiles();
                 this.updateStats();
                 this.autoSelectMode();
+            }
+
+            setTargetName(index, value) {
+                const fallback = this.files[index]?.name || '';
+                const nextValue = value.trim().length > 0 ? value.trim() : fallback;
+                this.targetNames[index] = nextValue;
+            }
+
+            getTargetName(index) {
+                return this.targetNames[index] || this.files[index]?.name || ('incoming-file-' + (index + 1));
             }
 
             autoSelectMode() {
@@ -739,6 +930,15 @@ export function getHtmlPage(): string {
                             </div>
                             <div class="progress-bar">
                                 <div class="progress-fill" style="width: 0%"></div>
+                            </div>
+                            <div class="file-target">
+                                <label for="targetName_\${index}">Save As</label>
+                                <input
+                                    id="targetName_\${index}"
+                                    type="text"
+                                    value="\${this.escapeAttr(this.getTargetName(index))}"
+                                    oninput="triFlow.setTargetName(\${index}, this.value)"
+                                />
                             </div>
                         </div>
                         <div class="file-size">\${formatFileSize(file.size)}</div>
@@ -812,20 +1012,83 @@ export function getHtmlPage(): string {
                 storageCards.forEach((card, index) => {
                     const modeNames = ['multistream', 'arcpack', 'chunkline'];
                     const mode = modeNames[index];
-                    if (mode && usage.filesByMode[mode]) {
+                    if (mode && usage.uploadsByMode[mode]) {
                         const countEl = card.querySelector('.storage-count');
                         const sizeEl = card.querySelector('.storage-size');
-                        if (countEl) countEl.textContent = \`\${usage.filesByMode[mode].count} files\`;
-                        if (sizeEl) sizeEl.textContent = usage.filesByMode[mode].sizeFormatted;
+                        if (countEl) countEl.textContent = \`\${usage.uploadsByMode[mode].count} uploads\`;
+                        if (sizeEl) sizeEl.textContent = usage.uploadsByMode[mode].sizeFormatted;
                     }
                 });
+
+                // Add deduplication stats if not already present
+                const storageSection = document.querySelector('.storage-stats');
+                let dedupCard = document.querySelector('.dedup-card');
+                if (!dedupCard) {
+                    dedupCard = document.createElement('div');
+                    dedupCard.className = 'storage-card dedup-card';
+                    dedupCard.innerHTML = '<h3>💾 Deduplication</h3><div class="storage-info"><span class="storage-count"></span><span class="storage-size"></span><span class="dedup-ratio"></span></div>';
+                    storageSection.appendChild(dedupCard);
+                }
+
+                const dedupCountEl = dedupCard.querySelector('.storage-count');
+                const dedupSizeEl = dedupCard.querySelector('.storage-size');
+                const dedupRatioEl = dedupCard.querySelector('.dedup-ratio');
+
+                if (dedupCountEl) dedupCountEl.textContent = \`\${usage.uniqueFiles} unique files\`;
+                if (dedupSizeEl) dedupSizeEl.textContent = \`Saved: \${usage.savedSpaceFormatted}\`;
+                if (dedupRatioEl) dedupRatioEl.textContent = \`Ratio: \${usage.deduplicationRatio}\`;
+
+                this.renderDeviceUsage(usage.device, usage.appPhysicalFormatted);
+            }
+
+            renderDeviceUsage(device, appPhysicalFormatted) {
+                const container = document.getElementById('deviceUsage');
+                if (!container) {
+                    return;
+                }
+
+                const meta = container.querySelector('.device-meta');
+                const bar = container.querySelector('.block-bar');
+                const legend = container.querySelector('.block-legend');
+
+                if (!meta || !bar || !legend) {
+                    return;
+                }
+
+                if (!device) {
+                    meta.textContent = 'Device information unavailable for this storage root.';
+                    bar.innerHTML = '';
+                    legend.innerHTML = '';
+                    return;
+                }
+
+                const appPercent = Number((device.blockGraph.app || 0).toFixed(2));
+                const otherPercent = Number((device.blockGraph.other || 0).toFixed(2));
+                const freePercent = Number((device.blockGraph.free || 0).toFixed(2));
+
+                meta.textContent =
+                    'Mount: ' + device.mountPath +
+                    ' | Total: ' + formatFileSize(device.totalBytes) +
+                    ' | Used: ' + formatFileSize(device.usedBytes) +
+                    ' (' + device.usagePercent.toFixed(1) + '%)';
+
+                bar.innerHTML =
+                    '<div class="block-segment app" style="width:' + appPercent + '%"></div>' +
+                    '<div class="block-segment other" style="width:' + otherPercent + '%"></div>' +
+                    '<div class="block-segment free" style="width:' + freePercent + '%"></div>';
+
+                const appText = appPhysicalFormatted || formatFileSize(device.appPhysicalBytes || 0);
+                legend.innerHTML =
+                    '<div class="legend-item"><span class="legend-dot" style="background:#00c2a8"></span>DropZone Files: ' + appText + ' (' + appPercent.toFixed(1) + '%)</div>' +
+                    '<div class="legend-item"><span class="legend-dot" style="background:#ff8c42"></span>Other Device Usage: ' + formatFileSize(device.otherUsedBytes || 0) + ' (' + otherPercent.toFixed(1) + '%)</div>' +
+                    '<div class="legend-item"><span class="legend-dot" style="background:#2f7cff"></span>Free Space: ' + formatFileSize(device.availableBytes || 0) + ' (' + freePercent.toFixed(1) + '%)</div>';
             }
 
             displayFilesList(filesData) {
                 this.storedFiles = [
-                    ...filesData.filesByMode.multistream,
-                    ...filesData.filesByMode.arcpack,
-                    ...filesData.filesByMode.chunkline
+                    ...filesData.uploadsByMode.multistream,
+                    ...filesData.uploadsByMode.arcpack,
+                    ...filesData.uploadsByMode.chunkline
                 ];
 
                 this.renderFilesExplorer();
@@ -866,6 +1129,8 @@ export function getHtmlPage(): string {
                     const encodedMode = encodeURIComponent(file.mode);
                     const encodedName = encodeURIComponent(file.name);
 
+                    const duplicateBadge = file.isDuplicate ? '<span style="background: #ffc107; color: #000; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold;">🔗 DUPLICATE</span>' : '';
+
                     // Check if it's an image file by extension
                     const ext = file.name.split('.').pop()?.toLowerCase();
                     const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(ext);
@@ -882,7 +1147,9 @@ export function getHtmlPage(): string {
 
                     return '<div class="file-item-grid" onclick="triFlow.previewFile(decodeURIComponent(\\\'' + encodedPath + '\\\'), decodeURIComponent(\\\'' + encodedMode + '\\\'), decodeURIComponent(\\\'' + encodedName + '\\\'))">' +
                         fileIcon +
-                        '<div class="file-name-grid">' + file.name + '</div>' +
+                        '<div class="file-name-grid">' + file.operatorName + '</div>' +
+                        '<div style="font-size: 11px; color: #888; margin: 2px 0;">' + file.name + '</div>' +
+                        duplicateBadge +
                         '<div class="file-actions">' +
                             '<button class="action-btn" onclick="event.stopPropagation(); triFlow.downloadFile(decodeURIComponent(\\\'' + encodedPath + '\\\'), decodeURIComponent(\\\'' + encodedMode + '\\\'), decodeURIComponent(\\\'' + encodedName + '\\\'))">Download</button>' +
                             '<button class="action-btn delete" onclick="event.stopPropagation(); triFlow.deleteFile(decodeURIComponent(\\\'' + encodedPath + '\\\'), decodeURIComponent(\\\'' + encodedMode + '\\\'), decodeURIComponent(\\\'' + encodedName + '\\\'))">Delete</button>' +
@@ -900,9 +1167,14 @@ export function getHtmlPage(): string {
                     const encodedMode = encodeURIComponent(file.mode);
                     const encodedName = encodeURIComponent(file.name);
 
+                    const duplicateBadge = file.isDuplicate ? '<span style="background: #ffc107; color: #000; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 8px;">🔗 DUP</span>' : '';
+
                     return '<div class="file-item-list" onclick="triFlow.previewFile(decodeURIComponent(\\\'' + encodedPath + '\\\'), decodeURIComponent(\\\'' + encodedMode + '\\\'), decodeURIComponent(\\\'' + encodedName + '\\\'))">' +
                         '<div class="file-icon-list">' + this.getFileIcon(file.type, file.name) + '</div>' +
-                        '<div class="file-name-list">' + file.name + '</div>' +
+                        '<div class="file-name-list">' +
+                            '<div>' + file.operatorName + duplicateBadge + '</div>' +
+                            '<div style="font-size: 11px; color: #888;">' + file.name + '</div>' +
+                        '</div>' +
                         '<div class="file-meta-list">' +
                             '<span>' + formatFileSize(file.size) + '</span>' +
                             '<span>' + new Date(file.uploadedAt).toLocaleDateString() + '</span>' +
@@ -1053,10 +1325,19 @@ export function getHtmlPage(): string {
                 return div.innerHTML;
             }
 
+            escapeAttr(text) {
+                return String(text)
+                    .replace(/&/g, '&amp;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;');
+            }
+
             async multiStreamUpload() {
                 const formData = new FormData();
                 this.files.forEach((file, index) => {
                     formData.append('file_' + index, file);
+                    formData.append('targetName_' + index, this.getTargetName(index));
                 });
                 formData.append('mode', 'MultiStream');
                 formData.append('metadata', JSON.stringify({
@@ -1204,8 +1485,9 @@ export function getHtmlPage(): string {
 
                     for (let i = 0; i < totalFiles; i++) {
                         const file = this.files[i];
-                        this.updateStatus('Uploading file ' + (i + 1) + ' of ' + totalFiles + ': ' + file.name, 'info');
-                        await this.uploadFileInChunks(file, i);
+                        const targetName = this.getTargetName(i);
+                        this.updateStatus('Uploading file ' + (i + 1) + ' of ' + totalFiles + ': ' + targetName, 'info');
+                        await this.uploadFileInChunks(file, i, targetName);
 
                         // Update overall progress for completed files
                         const completedFiles = i + 1;
@@ -1228,7 +1510,7 @@ export function getHtmlPage(): string {
                 }
             }
 
-            async uploadFileInChunks(file, fileIndex) {
+            async uploadFileInChunks(file, fileIndex, targetName) {
                 const chunkSize = 1024 * 1024; // 1MB chunks
                 const totalChunks = Math.ceil(file.size / chunkSize);
 
@@ -1239,7 +1521,7 @@ export function getHtmlPage(): string {
 
                     const formData = new FormData();
                     formData.append('chunk', chunk);
-                    formData.append('filename', file.name);
+                    formData.append('filename', targetName);
                     formData.append('chunkIndex', chunkIndex.toString());
                     formData.append('totalChunks', totalChunks.toString());
                     formData.append('fileIndex', fileIndex.toString());
@@ -1260,15 +1542,16 @@ export function getHtmlPage(): string {
 
                     // Update status with chunk progress
                     const currentChunk = chunkIndex + 1;
-                    this.updateStatus('Uploading ' + file.name + ' - chunk ' + currentChunk + ' of ' + totalChunks + ' (' + progress + '%)', 'info');
+                    this.updateStatus('Uploading ' + targetName + ' - chunk ' + currentChunk + ' of ' + totalChunks + ' (' + progress + '%)', 'info');
                 }
             }
 
             async createArchive() {
                 // Simplified archive creation - in real implementation would use compression streams
                 return {
-                    files: this.files.map(f => ({
-                        name: f.name,
+                    files: this.files.map((f, index) => ({
+                        name: this.getTargetName(index),
+                        originalName: f.name,
                         size: f.size,
                         type: f.type
                     })),
@@ -1286,6 +1569,7 @@ export function getHtmlPage(): string {
 
             clearFiles() {
                 this.files = [];
+                this.targetNames = [];
                 this.selectedMode = null;
                 document.getElementById('fileList').innerHTML = '';
                 document.getElementById('fileInput').value = '';

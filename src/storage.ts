@@ -1,5 +1,7 @@
 import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync } from 'fs';
 import { join, resolve, sep } from 'path';
+import { createHash } from 'crypto';
+import { Database } from './database';
 
 export type StorageMode = 'multistream' | 'arcpack' | 'chunkline';
 
@@ -17,6 +19,9 @@ export interface FileInfo {
   size: number;
   type: string;
   uploadedAt: Date;
+  hash?: string;
+  isDuplicate?: boolean;
+  uploadRecordId?: number;
 }
 
 export interface ChunkInfo {
@@ -31,11 +36,13 @@ export class FileStorage {
   private readonly storageRoot: string;
   private readonly uploadsDir: string;
   private readonly tempDir: string;
+  private db: Database;
 
-  constructor() {
+  constructor(database: Database) {
     assertLinuxRuntime();
 
-    this.storageRoot = resolve((process.env.DROPZONE_STORAGE_ROOT || DEFAULT_VAULT_ROOT).trim());
+    this.db = database;
+    this.storageRoot = resolve((process.env.DROPZONE_STORAGE_ROOT || '.').trim());
     this.uploadsDir = join(this.storageRoot, 'uploads');
     this.tempDir = join(this.uploadsDir, 'temp');
     this.ensureDirectories();
@@ -45,10 +52,7 @@ export class FileStorage {
     const dirs = [
       this.storageRoot,
       this.uploadsDir,
-      this.tempDir,
-      join(this.uploadsDir, 'multistream'),
-      join(this.uploadsDir, 'arcpack'),
-      join(this.uploadsDir, 'chunkline')
+      this.tempDir
     ];
 
     dirs.forEach(dir => {
@@ -70,8 +74,12 @@ export class FileStorage {
     });
   }
 
+  getDatabase(): Database {
+    return this.db;
+  }
+
   getModeDirectory(mode: StorageMode): string {
-    return join(this.uploadsDir, mode);
+    return this.uploadsDir;
   }
 
   resolveStoredFilePath(inputPath: string, mode: StorageMode): string | null {
@@ -88,29 +96,88 @@ export class FileStorage {
   }
 
   async saveMultiStreamFile(file: File, index: number): Promise<FileInfo> {
-    const timestamp = Date.now();
-    const extension = this.getFileExtension(file.name);
-    const filename = `${timestamp}_${index}${extension}`;
-    const filePath = join(this.uploadsDir, 'multistream', filename);
+    return this.saveMultiStreamFileWithTargetName(file, index, file.name);
+  }
 
+  async saveMultiStreamFileWithTargetName(file: File, index: number, targetName?: string): Promise<FileInfo> {
+    const operatorName = this.sanitizeFilename(targetName || file.name || `upload_${Date.now()}_${index}`);
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
+    // Calculate SHA-256 hash
+    const hash = this.calculateHash(buffer);
+
+    // Check if file already exists
+    const existingFile = this.db.findFileByHash(hash);
+
+    if (existingFile && existsSync(existingFile.physical_path)) {
+      // Duplicate detected - reuse existing file
+      const uploadRecordId = this.db.createUploadRecord({
+        file_hash: hash,
+        original_name: file.name,
+        operator_name: operatorName,
+        storage_mode: 'multistream'
+      });
+
+      return {
+        originalName: file.name,
+        savedPath: existingFile.physical_path,
+        size: file.size,
+        type: file.type,
+        uploadedAt: new Date(),
+        hash,
+        isDuplicate: true,
+        uploadRecordId
+      };
+    }
+
+    if (existingFile && !existsSync(existingFile.physical_path)) {
+      // Self-heal stale metadata so missing files are not treated as duplicates.
+      this.db.deleteStoredFile(existingFile.hash);
+      console.warn(`Removed stale hash record for missing file: ${existingFile.physical_path}`);
+    }
+
+    // New file - save physically
+    const filePath = this.makeUniquePath(this.uploadsDir, operatorName);
+
     writeFileSync(filePath, buffer);
+
+    // Create stored_files record
+    this.db.createStoredFile({
+      hash,
+      physical_path: filePath,
+      size_bytes: buffer.length,
+      mime_type: file.type || null
+    });
+
+    // Create upload record
+    const uploadRecordId = this.db.createUploadRecord({
+      file_hash: hash,
+      original_name: file.name,
+      operator_name: operatorName,
+      storage_mode: 'multistream'
+    });
 
     return {
       originalName: file.name,
       savedPath: filePath,
       size: file.size,
       type: file.type,
-      uploadedAt: new Date()
+      uploadedAt: new Date(),
+      hash,
+      isDuplicate: false,
+      uploadRecordId
     };
+  }
+
+  private calculateHash(buffer: Buffer): string {
+    return createHash('sha256').update(buffer).digest('hex');
   }
 
   async saveArcPackArchive(archiveData: any, metadata: any): Promise<string> {
     const timestamp = Date.now();
     const filename = `archive_${timestamp}.json`;
-    const filePath = join(this.uploadsDir, 'arcpack', filename);
+    const filePath = join(this.uploadsDir, filename);
 
     const archiveContent = {
       id: `arc_${timestamp}`,
@@ -124,7 +191,7 @@ export class FileStorage {
   }
 
   async saveChunk(chunk: File, chunkInfo: ChunkInfo): Promise<string> {
-    const tempFilename = `${chunkInfo.filename}_${chunkInfo.chunkIndex}_${chunkInfo.totalChunks}`;
+    const tempFilename = this.buildTempChunkName(chunkInfo.filename, chunkInfo.fileIndex, chunkInfo.chunkIndex, chunkInfo.totalChunks);
     const tempPath = join(this.tempDir, tempFilename);
 
     const arrayBuffer = await chunk.arrayBuffer();
@@ -134,19 +201,14 @@ export class FileStorage {
     return tempPath;
   }
 
-  async assembleChunks(filename: string, totalChunks: number): Promise<FileInfo> {
-    const finalDir = join(this.uploadsDir, 'chunkline');
-    const timestamp = Date.now();
-    const extension = this.getFileExtension(filename);
-    const finalFilename = `${timestamp}_complete${extension}`;
-    const finalPath = join(finalDir, finalFilename);
-
+  async assembleChunks(filename: string, totalChunks: number, fileIndex: number): Promise<FileInfo> {
+    const operatorName = this.sanitizeFilename(filename || `upload_${Date.now()}_${fileIndex}`);
     const chunks: Buffer[] = [];
     let totalSize = 0;
 
     // Collect all chunks
     for (let i = 0; i < totalChunks; i++) {
-      const tempFilename = `${filename}_${i}_${totalChunks}`;
+      const tempFilename = this.buildTempChunkName(filename, fileIndex, i, totalChunks);
       const tempPath = join(this.tempDir, tempFilename);
 
       if (!existsSync(tempPath)) {
@@ -158,25 +220,81 @@ export class FileStorage {
       totalSize += buffer.length;
     }
 
-    // Assemble final file
+    // Assemble buffer
     const finalBuffer = Buffer.concat(chunks);
-    writeFileSync(finalPath, finalBuffer);
+
+    // Calculate hash
+    const hash = this.calculateHash(finalBuffer);
+
+    // Check if file already exists
+    const existingFile = this.db.findFileByHash(hash);
 
     // Clean up temp files
-    this.cleanupTempFiles(filename, totalChunks);
+    this.cleanupTempFiles(filename, fileIndex, totalChunks);
+
+    if (existingFile && existsSync(existingFile.physical_path)) {
+      // Duplicate detected - reuse existing file
+      const uploadRecordId = this.db.createUploadRecord({
+        file_hash: hash,
+        original_name: filename,
+        operator_name: operatorName,
+        storage_mode: 'chunkline'
+      });
+
+      return {
+        originalName: filename,
+        savedPath: existingFile.physical_path,
+        size: totalSize,
+        type: 'application/octet-stream',
+        uploadedAt: new Date(),
+        hash,
+        isDuplicate: true,
+        uploadRecordId
+      };
+    }
+
+    if (existingFile && !existsSync(existingFile.physical_path)) {
+      // Self-heal stale metadata so missing files are not treated as duplicates.
+      this.db.deleteStoredFile(existingFile.hash);
+      console.warn(`Removed stale hash record for missing file: ${existingFile.physical_path}`);
+    }
+
+    // New file - save physically
+    const finalPath = this.makeUniquePath(this.uploadsDir, operatorName);
+
+    writeFileSync(finalPath, finalBuffer);
+
+    // Create stored_files record
+    this.db.createStoredFile({
+      hash,
+      physical_path: finalPath,
+      size_bytes: finalBuffer.length,
+      mime_type: null
+    });
+
+    // Create upload record
+    const uploadRecordId = this.db.createUploadRecord({
+      file_hash: hash,
+      original_name: filename,
+      operator_name: operatorName,
+      storage_mode: 'chunkline'
+    });
 
     return {
       originalName: filename,
       savedPath: finalPath,
       size: totalSize,
       type: 'application/octet-stream',
-      uploadedAt: new Date()
+      uploadedAt: new Date(),
+      hash,
+      isDuplicate: false,
+      uploadRecordId
     };
   }
 
-  private cleanupTempFiles(filename: string, totalChunks: number): void {
+  private cleanupTempFiles(filename: string, fileIndex: number, totalChunks: number): void {
     for (let i = 0; i < totalChunks; i++) {
-      const tempFilename = `${filename}_${i}_${totalChunks}`;
+      const tempFilename = this.buildTempChunkName(filename, fileIndex, i, totalChunks);
       const tempPath = join(this.tempDir, tempFilename);
 
       if (existsSync(tempPath)) {
@@ -187,6 +305,34 @@ export class FileStorage {
         }
       }
     }
+  }
+
+  private buildTempChunkName(filename: string, fileIndex: number, chunkIndex: number, totalChunks: number): string {
+    const safeName = this.sanitizeFilename(filename);
+    return `${fileIndex}_${safeName}_${chunkIndex}_${totalChunks}.part`;
+  }
+
+  private sanitizeFilename(filename: string): string {
+    const trimmed = filename.trim();
+    const fallback = 'incoming-file.bin';
+    const withoutSeparators = (trimmed.length > 0 ? trimmed : fallback).replace(/[\\/]/g, '_');
+    const safe = withoutSeparators.replace(/[^A-Za-z0-9._ -]/g, '_').replace(/\.{2,}/g, '.');
+    return safe.slice(0, 255) || fallback;
+  }
+
+  private makeUniquePath(dir: string, filename: string): string {
+    const extension = this.getFileExtension(filename);
+    const basename = extension ? filename.slice(0, -extension.length) : filename;
+    let candidate = join(dir, filename);
+    let counter = 1;
+
+    while (existsSync(candidate)) {
+      const nextName = `${basename}_${counter}${extension}`;
+      candidate = join(dir, nextName);
+      counter++;
+    }
+
+    return candidate;
   }
 
   private getFileExtension(filename: string): string {
