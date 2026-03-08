@@ -1,3 +1,9 @@
 {
-    "git.ignoreLimitWarning": true
+    "git.ignoreLimitWarning": true,
+    "terminal.integrated.profiles.linux": {
+        "nushell": {
+            "path": "/usr/bin/nu"
+        }
+    },
+    "terminal.integrated.defaultProfile.linux": "nushell"
 }

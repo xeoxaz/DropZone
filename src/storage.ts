@@ -1,5 +1,15 @@
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
-import { join } from 'path';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync } from 'fs';
+import { join, resolve, sep } from 'path';
+
+export type StorageMode = 'multistream' | 'arcpack' | 'chunkline';
+
+const DEFAULT_VAULT_ROOT = '/mnt/vault-01';
+
+export function assertLinuxRuntime(): void {
+  if (process.platform !== 'linux') {
+    throw new Error('DropZone storage is Linux-only and requires a Linux filesystem mount.');
+  }
+}
 
 export interface FileInfo {
   originalName: string;
@@ -18,17 +28,22 @@ export interface ChunkInfo {
 }
 
 export class FileStorage {
+  private readonly storageRoot: string;
   private readonly uploadsDir: string;
   private readonly tempDir: string;
 
   constructor() {
-    this.uploadsDir = join(process.cwd(), 'uploads');
+    assertLinuxRuntime();
+
+    this.storageRoot = resolve((process.env.DROPZONE_STORAGE_ROOT || DEFAULT_VAULT_ROOT).trim());
+    this.uploadsDir = join(this.storageRoot, 'uploads');
     this.tempDir = join(this.uploadsDir, 'temp');
     this.ensureDirectories();
   }
 
   private ensureDirectories(): void {
     const dirs = [
+      this.storageRoot,
       this.uploadsDir,
       this.tempDir,
       join(this.uploadsDir, 'multistream'),
@@ -38,9 +53,38 @@ export class FileStorage {
 
     dirs.forEach(dir => {
       if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
+        try {
+          mkdirSync(dir, { recursive: true });
+        } catch (error) {
+          const fsError = error as NodeJS.ErrnoException;
+          if (fsError.code === 'EACCES') {
+            throw new Error(
+              `Storage path is not writable: ${dir}. ` +
+              `Grant write access to ${this.storageRoot} (for example: sudo chown -R ${process.getuid?.()}:${process.getgid?.()} ${this.storageRoot}).`
+            );
+          }
+
+          throw error;
+        }
       }
     });
+  }
+
+  getModeDirectory(mode: StorageMode): string {
+    return join(this.uploadsDir, mode);
+  }
+
+  resolveStoredFilePath(inputPath: string, mode: StorageMode): string | null {
+    const modeDir = this.getModeDirectory(mode);
+    const candidate = inputPath.includes('/')
+      ? resolve(inputPath)
+      : resolve(join(modeDir, inputPath));
+
+    if (!candidate.startsWith(modeDir + sep)) {
+      return null;
+    }
+
+    return candidate;
   }
 
   async saveMultiStreamFile(file: File, index: number): Promise<FileInfo> {
@@ -51,7 +95,7 @@ export class FileStorage {
 
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-    
+
     writeFileSync(filePath, buffer);
 
     return {
@@ -85,7 +129,7 @@ export class FileStorage {
 
     const arrayBuffer = await chunk.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-    
+
     writeFileSync(tempPath, buffer);
     return tempPath;
   }
@@ -104,13 +148,14 @@ export class FileStorage {
     for (let i = 0; i < totalChunks; i++) {
       const tempFilename = `${filename}_${i}_${totalChunks}`;
       const tempPath = join(this.tempDir, tempFilename);
-      
-      if (existsSync(tempPath)) {
-        const chunkBuffer = await Bun.file(tempPath).arrayBuffer();
-        const buffer = Buffer.from(chunkBuffer);
-        chunks.push(buffer);
-        totalSize += buffer.length;
+
+      if (!existsSync(tempPath)) {
+        throw new Error(`Missing chunk file: ${tempFilename}`);
       }
+
+      const buffer = readFileSync(tempPath);
+      chunks.push(buffer);
+      totalSize += buffer.length;
     }
 
     // Assemble final file
@@ -133,10 +178,10 @@ export class FileStorage {
     for (let i = 0; i < totalChunks; i++) {
       const tempFilename = `${filename}_${i}_${totalChunks}`;
       const tempPath = join(this.tempDir, tempFilename);
-      
+
       if (existsSync(tempPath)) {
         try {
-          Bun.write(Bun.file(tempPath), new Uint8Array(0));
+          unlinkSync(tempPath);
         } catch (error) {
           console.error(`Failed to cleanup temp file: ${tempPath}`, error);
         }
@@ -151,6 +196,8 @@ export class FileStorage {
 
   getStorageStats(): any {
     return {
+      linuxOnly: true,
+      storageRoot: this.storageRoot,
       uploadsDir: this.uploadsDir,
       tempDir: this.tempDir,
       directories: {
