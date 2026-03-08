@@ -1,0 +1,157 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DropZone - Direct Backup Solution</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>DropZone</h1>
+            <p class="subtitle">Direct backup solution</p>
+        </div>
+
+        <div class="tabs">
+            <button class="tab-btn active" id="tabUpload" type="button">Drop Area / File upload</button>
+            <button class="tab-btn" id="tabStorage" type="button">Storage Overview</button>
+            <button class="tab-btn" id="tabBrowser" type="button">File Browser</button>
+        </div>
+
+        <div class="tab-panel active" id="uploadPanel">
+
+        <div class="drop-zone" id="dropZone">
+            <p>📁 Drag & drop files here</p>
+            <small>or click to select files</small>
+            <input type="file" id="fileInput" multiple style="display: none;">
+        </div>
+
+        <div class="status info" id="status">
+            Drag files here or click to select files
+        </div>
+
+        <div class="file-list" id="fileList"></div>
+
+        <div class="controls">
+            <button class="btn" id="clearBtn">Clear Files</button>
+            <button class="btn primary" id="uploadBtn">Start Upload</button>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-value" id="fileCount">0</div>
+                <div class="stat-label">Files</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="totalSize">0 MB</div>
+                <div class="stat-label">Total Size</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="activeMode">Auto</div>
+                <div class="stat-label">Active Mode</div>
+            </div>
+        </div>
+
+        </div>
+
+        <div class="tab-panel" id="storagePanel">
+
+        <div class="storage-section">
+            <h2>📁 Storage Overview</h2>
+            <div class="storage-stats" id="storageStats">
+                <div class="storage-card">
+                    <h3>All Files</h3>
+                    <div class="storage-info">
+                        <span class="storage-count">0 records</span>
+                        <span class="storage-size">0 MB</span>
+                    </div>
+                </div>
+                <div class="storage-card">
+                    <h3>Unique Files</h3>
+                    <div class="storage-info">
+                        <span class="storage-count">0 unique</span>
+                        <span class="storage-size">0 MB</span>
+                    </div>
+                </div>
+                <div class="storage-card">
+                    <h3>Saved Space</h3>
+                    <div class="storage-info">
+                        <span class="storage-count">0%</span>
+                        <span class="storage-size">0 MB</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="device-usage" id="deviceUsage">
+                <h3>Device Block Graph</h3>
+                <div class="device-meta">Loading device information...</div>
+                <div class="block-bar" aria-label="Device storage usage graph"></div>
+                <div class="block-legend"></div>
+            </div>
+
+            <div class="storage-highlights" id="storageHighlights"></div>
+
+            <div class="storage-analytics">
+                <div class="analytics-card" id="fileTypeDistributionCard">
+                    <h3>File Type Distribution</h3>
+                    <div class="mode-distribution-list" id="fileTypeDistribution"></div>
+                </div>
+                <div class="analytics-card" id="largestFilesCard">
+                    <h3>Top 3 Largest Files</h3>
+                    <div class="largest-files-list" id="largestFiles"></div>
+                </div>
+                <div class="analytics-card" id="archiveRecommendationsCard">
+                    <h3>Archive Suggestions</h3>
+                    <div class="archive-recommendations-list" id="archiveRecommendations"></div>
+                </div>
+            </div>
+
+            <button class="btn primary" id="refreshStorage">Refresh Storage</button>
+        </div>
+
+        </div>
+
+        <div class="tab-panel" id="browserPanel">
+
+        <div class="files-section">
+            <h2>📋 File Explorer</h2>
+            <div class="explorer-toolbar">
+                <div class="breadcrumb" id="breadcrumbTrail"></div>
+                <div class="explorer-search">
+                    <input type="search" id="browserSearchInput" placeholder="Quick search files and folders..." autocomplete="off">
+                </div>
+                <div class="view-controls">
+                    <button class="view-btn active" id="gridViewBtn" onclick="triFlow.setView('grid')">Grid</button>
+                    <button class="view-btn" id="listViewBtn" onclick="triFlow.setView('list')">List</button>
+                </div>
+            </div>
+            <div class="files-explorer" id="filesExplorer">
+                <div class="file-grid" id="filesContainer">
+                    <p class="no-files">Loading files...</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="preview-modal" id="previewModal">
+            <div class="preview-content">
+                <button class="preview-close" onclick="triFlow.closePreview()">✕ Close</button>
+                <div class="preview-header">
+                    <div class="preview-title" id="previewTitle">File Preview</div>
+                    <div class="preview-meta" id="previewMeta">File information</div>
+                </div>
+                <div class="preview-body" id="previewBody">
+                    Preview content will appear here
+                </div>
+            </div>
+        </div>
+
+        <div class="context-menu" id="itemContextMenu"></div>
+    </div>
+
+    <footer class="site-footer">Xeoxaz was here</footer>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

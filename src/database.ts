@@ -19,6 +19,8 @@ export interface UploadRecord {
   uploaded_at: string;
 }
 
+export type FileAccessEventType = 'preview' | 'download' | 'move' | 'rename';
+
 export class Database {
   private db: SQLiteDatabase;
   private readonly duplicateWindowSeconds: number;
@@ -39,6 +41,7 @@ export class Database {
 
   async initialize(): Promise<void> {
     this.createTables();
+    this.migrateFileAccessEventsSchema();
   }
 
   private createTables(): void {
@@ -64,8 +67,20 @@ export class Database {
       )
     `);
 
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS file_access_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_hash TEXT NOT NULL,
+        event_type TEXT NOT NULL CHECK(event_type IN ('preview', 'download', 'move', 'rename')),
+        event_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (file_hash) REFERENCES stored_files(hash) ON DELETE CASCADE
+      )
+    `);
+
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_file_hash ON upload_records(file_hash)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_uploaded_at ON upload_records(uploaded_at DESC)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_access_file_hash ON file_access_events(file_hash)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_access_event_at ON file_access_events(event_at DESC)`);
   }
 
   findFileByHash(hash: string): StoredFile | null {
@@ -76,6 +91,74 @@ export class Database {
   findFileByPath(physicalPath: string): StoredFile | null {
     const query = this.db.query('SELECT * FROM stored_files WHERE physical_path = ?');
     return query.get(physicalPath) as StoredFile | null;
+  }
+
+  getStoredFilesByPathPrefix(pathPrefix: string): StoredFile[] {
+    const query = this.db.query('SELECT * FROM stored_files WHERE physical_path LIKE ?');
+    return query.all(`${pathPrefix}%`) as StoredFile[];
+  }
+
+  updateStoredFilePath(oldPath: string, newPath: string): void {
+    const query = this.db.query('UPDATE stored_files SET physical_path = ? WHERE physical_path = ?');
+    query.run(newPath, oldPath);
+  }
+
+  updateStoredFilePathPrefix(oldPrefix: string, newPrefix: string): void {
+    const query = this.db.query(`
+      UPDATE stored_files
+      SET physical_path = replace(physical_path, ?, ?)
+      WHERE physical_path LIKE ?
+    `);
+    query.run(oldPrefix, newPrefix, `${oldPrefix}%`);
+  }
+
+  updateUploadOperatorNameByHash(fileHash: string, operatorName: string): void {
+    const query = this.db.query('UPDATE upload_records SET operator_name = ? WHERE file_hash = ?');
+    query.run(operatorName, fileHash);
+  }
+
+  createFileAccessEvent(fileHash: string, eventType: FileAccessEventType): void {
+    const query = this.db.query('INSERT INTO file_access_events (file_hash, event_type) VALUES (?, ?)');
+    query.run(fileHash, eventType);
+  }
+
+  createFileAccessEventByPath(physicalPath: string, eventType: FileAccessEventType): void {
+    const file = this.findFileByPath(physicalPath);
+    if (!file) {
+      return;
+    }
+
+    this.createFileAccessEvent(file.hash, eventType);
+  }
+
+  private migrateFileAccessEventsSchema(): void {
+    const tableInfo = this.db.query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'file_access_events'").get() as { sql?: string } | null;
+    const sql = String(tableInfo?.sql || '').toLowerCase();
+
+    // Already supports move/rename or table absent.
+    if (!sql || (sql.includes("'move'") && sql.includes("'rename'"))) {
+      return;
+    }
+
+    this.db.run('ALTER TABLE file_access_events RENAME TO file_access_events_legacy');
+    this.db.run(`
+      CREATE TABLE file_access_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_hash TEXT NOT NULL,
+        event_type TEXT NOT NULL CHECK(event_type IN ('preview', 'download', 'move', 'rename')),
+        event_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (file_hash) REFERENCES stored_files(hash) ON DELETE CASCADE
+      )
+    `);
+    this.db.run(`
+      INSERT INTO file_access_events (id, file_hash, event_type, event_at)
+      SELECT id, file_hash, event_type, event_at
+      FROM file_access_events_legacy
+      WHERE event_type IN ('preview', 'download')
+    `);
+    this.db.run('DROP TABLE file_access_events_legacy');
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_access_file_hash ON file_access_events(file_hash)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_access_event_at ON file_access_events(event_at DESC)`);
   }
 
   createStoredFile(file: Omit<StoredFile, 'created_at'>): void {
@@ -175,17 +258,41 @@ export class Database {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
-  getAllUploadRecords(): (UploadRecord & { physical_path: string; size_bytes: number })[] {
+  getAllUploadRecords(): (UploadRecord & {
+    physical_path: string;
+    size_bytes: number;
+    last_touched_at: string;
+    download_count: number;
+    preview_count: number;
+  })[] {
     const query = this.db.query(`
       SELECT
         ur.*,
         sf.physical_path,
-        sf.size_bytes
+        sf.size_bytes,
+        COALESCE(activity.last_touched_at, ur.uploaded_at) AS last_touched_at,
+        COALESCE(activity.download_count, 0) AS download_count,
+        COALESCE(activity.preview_count, 0) AS preview_count
       FROM upload_records ur
       JOIN stored_files sf ON ur.file_hash = sf.hash
+      LEFT JOIN (
+        SELECT
+          file_hash,
+          MAX(event_at) AS last_touched_at,
+          SUM(CASE WHEN event_type = 'download' THEN 1 ELSE 0 END) AS download_count,
+          SUM(CASE WHEN event_type = 'preview' THEN 1 ELSE 0 END) AS preview_count
+        FROM file_access_events
+        GROUP BY file_hash
+      ) activity ON activity.file_hash = sf.hash
       ORDER BY ur.uploaded_at DESC
     `);
-    return query.all() as (UploadRecord & { physical_path: string; size_bytes: number })[];
+    return query.all() as (UploadRecord & {
+      physical_path: string;
+      size_bytes: number;
+      last_touched_at: string;
+      download_count: number;
+      preview_count: number;
+    })[];
   }
 
   getUploadRecordsByHash(hash: string): UploadRecord[] {

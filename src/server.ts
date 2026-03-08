@@ -1,12 +1,40 @@
 import { handleMultiStream } from './handlers/multistream.js';
 import { handleArcPack } from './handlers/arcpack.js';
 import { handleChunkLine } from './handlers/chunkline.js';
-import { handleFilePreview, handleFileDownload, handleFileDelete } from './handlers/files.js';
-import { getHtmlPage } from './html.js';
+import { handleFilePreview, handleFileDownload, handleFileDelete, handleFolderCreate, handleDirectorySummary, handleDirectoryDelete, handlePathMove, handlePathRename } from './handlers/files.js';
 import { triFlowModes, detectServerCapabilities } from './triflow.js';
 import { FileStorage } from './storage.js';
 import { getFileSystemStats, getStorageUsage } from './filesystem.js';
 import { Database } from './database.js';
+import { existsSync } from 'fs';
+import { join, resolve, sep } from 'path';
+import { format as formatLog } from 'util';
+
+function getTimestamp24h(): string {
+  return new Date().toLocaleTimeString('en-GB', { hour12: false });
+}
+
+function writeTimestamped(stream: NodeJS.WriteStream, args: unknown[]): void {
+  stream.write(`[${getTimestamp24h()}] ${formatLog(...(args as []))}\n`);
+}
+
+console.log = (...args: unknown[]) => writeTimestamped(process.stdout, args);
+console.info = (...args: unknown[]) => writeTimestamped(process.stdout, args);
+console.debug = (...args: unknown[]) => writeTimestamped(process.stdout, args);
+console.warn = (...args: unknown[]) => writeTimestamped(process.stderr, args);
+console.error = (...args: unknown[]) => writeTimestamped(process.stderr, args);
+
+const staticRoot = resolve('./src/static');
+
+function resolveStaticPath(urlPath: string): string | null {
+  const relativePath = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/static\//, '');
+  const candidate = resolve(join(staticRoot, relativePath));
+  if (!candidate.startsWith(staticRoot + sep) && candidate !== staticRoot) {
+    return null;
+  }
+
+  return candidate;
+}
 
 function getGhostRefreshIntervalMs(): number {
   const rawValue = process.env.DROPZONE_GHOST_REFRESH_MS;
@@ -63,11 +91,23 @@ const server = Bun.serve({
     const url = new URL(req.url);
 
     if (url.pathname === '/') {
-      return new Response(getHtmlPage(), {
-        headers: {
-          'Content-Type': 'text/html',
-        },
+      const indexPath = resolveStaticPath('/');
+      if (!indexPath || !existsSync(indexPath)) {
+        return new Response('Frontend entry not found', { status: 500 });
+      }
+
+      return new Response(Bun.file(indexPath), {
+        headers: { 'Content-Type': 'text/html' }
       });
+    }
+
+    if (url.pathname.startsWith('/static/')) {
+      const staticPath = resolveStaticPath(url.pathname);
+      if (!staticPath || !existsSync(staticPath)) {
+        return new Response('Static file not found', { status: 404 });
+      }
+
+      return new Response(Bun.file(staticPath));
     }
 
     if (url.pathname.startsWith('/api/triflow/')) {
@@ -100,6 +140,26 @@ const server = Bun.serve({
 
     if (url.pathname === '/api/files/delete') {
       return handleFileDelete(req, url, storage);
+    }
+
+    if (url.pathname === '/api/files/folder') {
+      return handleFolderCreate(req, storage);
+    }
+
+    if (url.pathname === '/api/files/directory/summary') {
+      return handleDirectorySummary(req, url, storage);
+    }
+
+    if (url.pathname === '/api/files/directory') {
+      return handleDirectoryDelete(req, url, storage);
+    }
+
+    if (url.pathname === '/api/files/move') {
+      return handlePathMove(req, storage);
+    }
+
+    if (url.pathname === '/api/files/rename') {
+      return handlePathRename(req, storage);
     }
 
     return new Response('Not Found', { status: 404 });

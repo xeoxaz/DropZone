@@ -1,5 +1,30 @@
-import { formatFileSize } from '../triflow.js';
 import { FileStorage, type ChunkInfo } from '../storage.js';
+
+const chunkProgressState = new Map<string, { totalChunks: number; lastPercent: number }>();
+
+function renderChunkProgress(filename: string, chunkIndex: number, totalChunks: number): void {
+  const completeChunks = chunkIndex + 1;
+  const percent = Math.min(100, Math.floor((completeChunks / totalChunks) * 100));
+  const width = 24;
+  const filled = Math.min(width, Math.round((percent / 100) * width));
+  const bar = '#'.repeat(filled) + '-'.repeat(width - filled);
+
+  const key = `${filename}:${totalChunks}`;
+  const previous = chunkProgressState.get(key);
+  if (previous && previous.lastPercent === percent && completeChunks < totalChunks) {
+    return;
+  }
+
+  chunkProgressState.set(key, { totalChunks, lastPercent: percent });
+
+  const message = `\r🔗 ChunkLine ${filename} [${bar}] ${String(percent).padStart(3, ' ')}% (${completeChunks}/${totalChunks})`;
+  process.stdout.write(message);
+
+  if (completeChunks >= totalChunks) {
+    process.stdout.write('\n');
+    chunkProgressState.delete(key);
+  }
+}
 
 export async function handleChunkLine(req: Request, storage: FileStorage): Promise<Response> {
   try {
@@ -10,7 +35,7 @@ export async function handleChunkLine(req: Request, storage: FileStorage): Promi
     const totalChunks = parseInt(formData.get('totalChunks') as string);
     const fileIndex = parseInt(formData.get('fileIndex') as string);
 
-    console.log(`🔗 ChunkLine - File: ${filename}, Chunk: ${chunkIndex + 1}/${totalChunks}, Size: ${formatFileSize(chunk.size)}`);
+    renderChunkProgress(filename, chunkIndex, totalChunks);
 
     // Save chunk
     const chunkInfo: ChunkInfo = {
@@ -23,8 +48,6 @@ export async function handleChunkLine(req: Request, storage: FileStorage): Promi
 
     const tempPath = await storage.saveChunk(chunk, chunkInfo);
     chunkInfo.tempPath = tempPath;
-
-    console.log(`🔗 Chunk saved: ${tempPath}`);
 
     const isComplete = chunkIndex === totalChunks - 1;
     let assembledFile = null;

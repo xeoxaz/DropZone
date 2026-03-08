@@ -1,4 +1,4 @@
-import { statfsSync } from 'fs';
+import { readdirSync, statfsSync } from 'fs';
 import { FileStorage } from './storage.js';
 import { Database } from './database.js';
 
@@ -27,6 +27,9 @@ export interface StoredFile {
   uploadedAt: string | Date;
   mode: string;
   hash: string;
+  lastTouchedAt: string;
+  downloadCount: number;
+  previewCount: number;
   isDuplicate?: boolean;
 }
 
@@ -46,11 +49,17 @@ export interface FileSystemStats {
     chunkline: string;
     temp: string;
   };
+  explorerDirectories: Array<{
+    mode: string;
+    path: string;
+    label: string;
+  }>;
 }
 
 export function getFileSystemStats(db: Database, storage: FileStorage): FileSystemStats {
   const storageStats = storage.getStorageStats();
   const allUploads = db.getAllUploadRecords();
+  const explorerDirectories = listExplorerDirectories(storageStats);
 
   // Group uploads by mode
   const uploadsByMode = {
@@ -74,7 +83,10 @@ export function getFileSystemStats(db: Database, storage: FileStorage): FileSyst
       type: getFileType(upload.original_name),
       uploadedAt: upload.uploaded_at,
       mode: upload.storage_mode,
-      hash: upload.file_hash
+      hash: upload.file_hash,
+      lastTouchedAt: upload.last_touched_at,
+      downloadCount: Number(upload.download_count || 0),
+      previewCount: Number(upload.preview_count || 0)
     };
 
     totalSize += storedFile.size;
@@ -113,8 +125,56 @@ export function getFileSystemStats(db: Database, storage: FileStorage): FileSyst
     totalSize,
     savedSpace,
     uploadsByMode,
-    directories: storageStats.directories
+    directories: storageStats.directories,
+    explorerDirectories
   };
+}
+
+function listExplorerDirectories(storageStats: any): Array<{ mode: string; path: string; label: string }> {
+  const uploadsRoot = storageStats.uploadsDir as string;
+  const modeRoots = storageStats.directories as Record<string, string>;
+  const directories: Array<{ mode: string; path: string; label: string }> = [];
+  const queue: string[] = [uploadsRoot];
+
+  while (queue.length > 0) {
+    const current = queue.shift() as string;
+    let entries: { isDirectory: () => boolean; name: string | Buffer }[];
+
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      const entryName = typeof entry.name === 'string' ? entry.name : entry.name.toString();
+      const fullPath = `${current}/${entryName}`;
+      const mode = classifyDirectoryMode(fullPath, modeRoots);
+
+      directories.push({
+        mode,
+        path: fullPath,
+        label: entryName
+      });
+
+      queue.push(fullPath);
+    }
+  }
+
+  directories.sort((a, b) => a.path.localeCompare(b.path));
+  return directories;
+}
+
+function classifyDirectoryMode(path: string, modeRoots: Record<string, string>): string {
+  if (path === modeRoots.multistream || path.startsWith(modeRoots.multistream + '/')) return 'multistream';
+  if (path === modeRoots.arcpack || path.startsWith(modeRoots.arcpack + '/')) return 'arcpack';
+  if (path === modeRoots.chunkline || path.startsWith(modeRoots.chunkline + '/')) return 'chunkline';
+  if (path === modeRoots.temp || path.startsWith(modeRoots.temp + '/')) return 'temp';
+  return 'multistream';
 }
 
 function getFileType(filename: string): string {
