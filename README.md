@@ -1,4 +1,8 @@
-# dropzone
+# DropZone
+
+Direct backup full-stack solution built with Bun.
+
+**Author:** Xeoxaz <Xeoxaz@outlook.com>
 
 To install dependencies:
 
@@ -12,4 +16,4 @@ To run:
 bun run index.ts
 ```
 
-This project was created using `bun init` in bun v1.2.10. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+DropZone is a comprehensive full-stack application for direct backup operations.

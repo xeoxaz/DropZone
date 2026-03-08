@@ -1,5 +1,7 @@
 {
   "name": "DropZone",
+  "description": "Direct backup full-stack solution",
+  "author": "Xeoxaz <Xeoxaz@outlook.com>",
   "module": "index.ts",
   "type": "module",
   "private": true,

@@ -1,1 +1,1 @@
-console.log("Welcome to DropZone!");
+import './src/server.js';
